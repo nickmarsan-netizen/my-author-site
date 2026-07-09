@@ -532,6 +532,84 @@ select.inp { cursor: pointer; }
 .bold { font-weight: 700; }
 .empty-state { text-align: center; padding: 60px 24px; color: var(--sub); }
 .empty-state svg { width: 48px; height: 48px; opacity: 0.3; margin-bottom: 12px; }
+
+/* ─── MODAL SHEET ─── */
+#modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  z-index: 500;
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+}
+#modal-overlay.show { display: flex; }
+#modal-sheet {
+  background: var(--surface);
+  border-top-left-radius: 20px;
+  border-top-right-radius: 20px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 80dvh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 20px 20px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+.modal-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
+.modal-sub { font-size: 13px; color: var(--sub); line-height: 1.5; margin-bottom: 14px; }
+.modal-textarea {
+  width: 100%;
+  min-height: 140px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  font-size: 12px;
+  padding: 10px;
+  font-family: ui-monospace, monospace;
+  outline: none;
+}
+
+/* ─── EXERCISE SWAP ─── */
+.swap-btn {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--card2);
+  border: none;
+  color: var(--sub);
+  font-size: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+.swap-btn:active { opacity: 0.6; }
+.sub-opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 13px 14px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.sub-opt:active { border-color: var(--gold); }
+.sub-remember {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 0 14px;
+  font-size: 14px;
+  color: var(--text);
+}
+.sub-remember input { width: 20px; height: 20px; accent-color: var(--gold); }
 </style>
 </head>
 <body>
@@ -547,8 +625,13 @@ select.inp { cursor: pointer; }
   </select>
   <label class="inp-label" for="bw-inp">Your Current Bodyweight</label>
   <input class="inp" type="number" id="bw-inp" placeholder="e.g. 185" inputmode="decimal" step="0.1">
+  <div id="settings-extra" style="display:none">
+    <button class="btn btn-ghost" onclick="exportData()">Export Backup</button>
+    <button class="btn btn-ghost mt-8" onclick="importData()">Import Backup</button>
+  </div>
   <div class="setup-spacer"></div>
-  <button class="btn btn-gold" onclick="completeSetup()">Start Program →</button>
+  <button class="btn btn-gold" id="setup-btn" onclick="completeSetup()">Start Program →</button>
+  <button class="btn btn-ghost mt-8" id="setup-close" style="display:none" onclick="closeSettings()">Close</button>
 </div>
 
 <!-- ─── REST TIMER OVERLAY ─── -->
@@ -572,6 +655,11 @@ select.inp { cursor: pointer; }
     </div>
   </div>
   <div id="hdo-body" style="padding:16px"></div>
+</div>
+
+<!-- ─── MODAL SHEET ─── -->
+<div id="modal-overlay" onclick="if(event.target===this)closeModal()">
+  <div id="modal-sheet"></div>
 </div>
 
 <!-- ─── MAIN APP ─── -->
@@ -931,25 +1019,72 @@ const SESSIONS = buildSessions();
 const TOTAL_WEEKS = PHASES.reduce((s, p) => s + p.totalWeeks, 0);
 
 // ═══════════════════════════════════════════════════════════════════
+// EXERCISE SUBSTITUTIONS — same movement pattern, same sets × reps
+// ═══════════════════════════════════════════════════════════════════
+
+const SUBS = {
+  'Squat':             ['Front Squat', 'Hack Squat', 'Leg Press', 'Goblet Squat', 'Bulgarian Split Squat'],
+  'Deadlift':          ['Trap Bar Deadlift', 'Rack Pull', 'Romanian Deadlift', 'Hip Thrust'],
+  'Trap Bar Deadlift': ['Deadlift', 'Rack Pull', 'Hip Thrust'],
+  'Bench Press':       ['Dumbbell Bench Press', 'Machine Chest Press', 'Floor Press', 'Weighted Push-up'],
+  'Incline DB Press':  ['Incline Barbell Press', 'Machine Incline Press', 'Low-to-High Cable Fly'],
+  'Overhead Press':    ['Dumbbell Shoulder Press', 'Machine Shoulder Press', 'Landmine Press'],
+  'Push Press':        ['Dumbbell Push Press', 'Overhead Press', 'Landmine Press'],
+  'Weighted Pull-up':  ['Lat Pulldown', 'Chin-up', 'Assisted Pull-up', 'Neutral-Grip Pulldown'],
+  'Barbell Row':       ['Chest-Supported Row', 'Cable Row', 'T-Bar Row', 'Dumbbell Row'],
+  'Dumbbell Row':      ['Cable Row', 'Chest-Supported Row', 'Barbell Row'],
+  'Cable Row':         ['Chest-Supported Row', 'Machine Row', 'Dumbbell Row'],
+  'Cable Fly':         ['Dumbbell Fly', 'Pec Deck', 'Deficit Push-up'],
+  'Weighted Dips':     ['Dips', 'Close-Grip Bench Press', 'Machine Dip'],
+  'Tricep Dips':       ['Close-Grip Push-up', 'Cable Pushdown', 'Skullcrusher'],
+  'Face Pull':         ['Band Pull-Apart', 'Rear Delt Fly', 'Reverse Pec Deck'],
+  'Romanian Deadlift': ['Good Morning', 'Back Extension', 'Single-Leg RDL'],
+  'Leg Curl':          ['Nordic Curl', 'Glute Ham Raise', 'Stability Ball Curl'],
+  'Leg Press':         ['Hack Squat', 'Goblet Squat', 'Walking Lunge'],
+  'Calf Raise':        ['Seated Calf Raise', 'Single-Leg Calf Raise'],
+  'Power Cleans':      ['Trap Bar Jump', 'Dumbbell Snatch', 'Kettlebell Swing', 'Med Ball Clean'],
+  'Box Jumps':         ['Broad Jump', 'Squat Jump', 'Step-up Jump'],
+  'Med Ball Slams':    ['Kettlebell Swing', 'Cable Woodchop', 'Sledgehammer Strike'],
+  'Battle Rope':       ['Assault Bike Sprint', 'Rower Sprint', 'Jump Rope'],
+  'Sled Push':         ['Heavy Carry', 'Treadmill Push (motor off)', 'Hill Sprint'],
+  'Farmer Carry':      ['Trap Bar Carry', 'Suitcase Carry', 'Heavy Dumbbell Hold'],
+  'Heavy Bag':         ['Shadowboxing', 'Assault Bike Intervals', 'Rower Intervals'],
+  'Sprint Intervals':  ['Assault Bike Sprints', 'Rower Sprints', 'Hill Sprints'],
+  'Sprints':           ['Assault Bike Sprints', 'Rower Sprints', 'Hill Sprints'],
+  'Tire Flips':        ['Kettlebell Swing', 'Sled Push', 'Sandbag Toss'],
+  'Burpees':           ['Squat Thrust', 'Assault Bike Sprint', 'Mountain Climbers']
+};
+
+// ═══════════════════════════════════════════════════════════════════
 // STATE & STORAGE
 // ═══════════════════════════════════════════════════════════════════
 
 function getState() {
   try { return JSON.parse(localStorage.getItem('ng_state') || 'null'); } catch { return null; }
 }
-function saveState(s) { localStorage.setItem('ng_state', JSON.stringify(s)); }
+function saveState(s) {
+  try { localStorage.setItem('ng_state', JSON.stringify(s)); }
+  catch { showToast('⚠️ Could not save — storage blocked or full'); }
+}
 
 function getLogs() {
   try { return JSON.parse(localStorage.getItem('ng_logs') || '{}'); } catch { return {}; }
 }
-function saveLogs(l) { localStorage.setItem('ng_logs', JSON.stringify(l)); }
+function saveLogs(l) {
+  try { localStorage.setItem('ng_logs', JSON.stringify(l)); }
+  catch { showToast('⚠️ Could not save — storage blocked or full'); }
+}
 
+// Active workout lives in localStorage so it survives the app being
+// killed in the background mid-session (sessionStorage does not).
 function getActiveWorkout() {
-  try { return JSON.parse(sessionStorage.getItem('ng_active') || 'null'); } catch { return null; }
+  try { return JSON.parse(localStorage.getItem('ng_active') || 'null'); } catch { return null; }
 }
 function saveActiveWorkout(w) {
-  if (w) sessionStorage.setItem('ng_active', JSON.stringify(w));
-  else sessionStorage.removeItem('ng_active');
+  try {
+    if (w) localStorage.setItem('ng_active', JSON.stringify(w));
+    else localStorage.removeItem('ng_active');
+  } catch { showToast('⚠️ Could not save — storage blocked or full'); }
 }
 
 // Get last logged weights for an exercise by name
@@ -976,7 +1111,7 @@ function getMaxWeight(exerciseName) {
     const ex = log.exercises.find(e => e.name === exerciseName);
     if (!ex) continue;
     for (const s of (ex.sets || [])) {
-      if ((s.weight || 0) > max) { max = s.weight; maxDate = log.date; }
+      if (s.done && (s.weight || 0) > max) { max = s.weight; maxDate = log.date; }
     }
   }
   return { max, date: maxDate };
@@ -989,27 +1124,90 @@ function getMaxWeight(exerciseName) {
 function completeSetup() {
   const unit = document.getElementById('unit-sel').value;
   const bw = parseFloat(document.getElementById('bw-inp').value) || 0;
-  const state = { nextSession: 0, unit, initialized: true };
+  // Merge into existing state — never reset program position or subs
+  const prev = getState() || {};
+  const state = { ...prev, unit, initialized: true, nextSession: prev.nextSession || 0 };
   saveState(state);
 
   if (bw > 0) {
     const logs = getLogs();
-    logs._bodyweight = [{ date: new Date().toISOString().slice(0,10), weight: bw }];
+    if (!logs._bodyweight) logs._bodyweight = [];
+    logs._bodyweight.push({ date: new Date().toISOString().slice(0,10), weight: bw });
     saveLogs(logs);
   }
 
   document.getElementById('setup-overlay').classList.add('hidden');
-  renderAll();
+  showTab(currentTab);
 }
 
 function openSettings() {
   const state = getState();
   document.getElementById('unit-sel').value = state.unit || 'lbs';
   document.getElementById('bw-inp').value = '';
-  document.getElementById('setup-overlay').classList.remove('hidden');
-  document.getElementById('setup-overlay').querySelector('.setup-title').textContent = 'Settings';
-  document.getElementById('setup-overlay').querySelector('.setup-sub').textContent =
-    'Update your preferences. Your workout history will not be affected.';
+  const ov = document.getElementById('setup-overlay');
+  ov.classList.remove('hidden');
+  ov.querySelector('.setup-title').textContent = 'Settings';
+  ov.querySelector('.setup-sub').textContent =
+    'Update your preferences, or back up your data. Your program position and workout history are never affected. Leave bodyweight blank to keep it unchanged.';
+  document.getElementById('settings-extra').style.display = 'block';
+  document.getElementById('setup-btn').textContent = 'Save Settings';
+  document.getElementById('setup-close').style.display = 'block';
+}
+
+function closeSettings() {
+  document.getElementById('setup-overlay').classList.add('hidden');
+}
+
+// ─── Generic bottom-sheet modal ───
+function openModal(html) {
+  document.getElementById('modal-sheet').innerHTML = html;
+  document.getElementById('modal-overlay').classList.add('show');
+}
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('show');
+}
+
+// ─── Backup / Restore ───
+function exportData() {
+  const payload = JSON.stringify({ state: getState(), logs: getLogs(), exportedAt: new Date().toISOString() });
+  openModal(`
+    <div class="modal-title">Export Backup</div>
+    <div class="modal-sub">Copy this text and save it somewhere safe — Notes, or email it to yourself. To restore on any phone, open Settings → Import Backup and paste it.</div>
+    <textarea class="modal-textarea" id="export-ta" readonly>${payload.replace(/</g, '&lt;')}</textarea>
+    <button class="btn btn-gold mt-12" onclick="copyExport()">Copy to Clipboard</button>
+    <button class="btn btn-ghost mt-8" onclick="closeModal()">Done</button>
+  `);
+}
+function copyExport() {
+  const ta = document.getElementById('export-ta');
+  ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length);
+  const fallback = () => { try { document.execCommand('copy'); showToast('Copied'); } catch { showToast('Select the text and copy manually'); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(ta.value).then(() => showToast('Copied')).catch(fallback);
+  } else fallback();
+}
+function importData() {
+  openModal(`
+    <div class="modal-title">Import Backup</div>
+    <div class="modal-sub">Paste a backup you exported earlier. This replaces the data currently on this phone.</div>
+    <textarea class="modal-textarea" id="import-ta" placeholder="Paste backup text here"></textarea>
+    <button class="btn btn-gold mt-12" onclick="doImport()">Restore Backup</button>
+    <button class="btn btn-ghost mt-8" onclick="closeModal()">Cancel</button>
+  `);
+}
+function doImport() {
+  try {
+    const data = JSON.parse(document.getElementById('import-ta').value);
+    if (!data.state || !data.logs) throw new Error('bad');
+    saveState(data.state);
+    saveLogs(data.logs);
+    closeModal();
+    closeSettings();
+    showToast('Backup restored ✓');
+    showTab('home');
+  } catch {
+    showToast('That doesn\'t look like a valid backup');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1125,10 +1323,12 @@ function startWorkout(sessionIdx) {
   if (existing && existing.sessionIdx === sessionIdx) {
     activeWorkout = existing;
   } else {
-    // Build fresh workout log structure
+    // Build fresh workout log structure, applying remembered substitutions
+    const subMap = (getState() || {}).subs || {};
     const exercises = session.exercises.map(e => {
       if (e.name === '__DIVIDER__') return { divider: true };
-      const prevWeights = getLastWeights(e.name);
+      const name = subMap[e.name] || e.name;
+      const prevWeights = getLastWeights(name);
       const numSets = e.sets || 3;
       const repsDefault = typeof e.reps === 'number' ? e.reps : 0;
       const sets = Array.from({ length: numSets }, (_, i) => ({
@@ -1136,7 +1336,9 @@ function startWorkout(sessionIdx) {
         reps: repsDefault,
         done: false
       }));
-      return { name: e.name, unit: e.unit, type: e.type || 'weight', repsLabel: e.reps, sets };
+      const ex = { name, unit: e.unit, type: e.type || 'weight', repsLabel: e.reps, sets };
+      if (name !== e.name) ex.origName = e.name;
+      return ex;
     });
     activeWorkout = { sessionIdx, startedAt: Date.now(), exercises };
     saveActiveWorkout(activeWorkout);
@@ -1186,7 +1388,7 @@ function renderWorkout() {
       return;
     }
 
-    const srcEx = session.exercises.find(e => e.name === ex.name) || {};
+    const srcEx = session.exercises.find(e => e.name === (ex.origName || ex.name)) || {};
     const allDone = ex.sets.every(s => s.done);
 
     html += `<div class="ex-block" id="ex-${ei}">
@@ -1197,9 +1399,11 @@ function renderWorkout() {
         <div class="ex-info">
           <div class="ex-name">${ex.name}</div>
           <div class="ex-target">${ex.sets.length} sets × ${ex.repsLabel || ex.sets[0]?.reps || ''} ${ex.unit !== 'lbs' ? ex.unit : unit}</div>
+          ${ex.origName ? `<div class="ex-note" style="color:var(--blue)">⇄ Substitute for ${ex.origName}</div>` : ''}
           ${srcEx.note ? `<div class="ex-note">${srcEx.note}</div>` : ''}
           ${srcEx.bNote ? `<div class="ex-note">${srcEx.bNote}</div>` : ''}
         </div>
+        <button class="swap-btn" onclick="openSubPicker(${ei})" aria-label="Swap exercise">⇄</button>
       </div>
       <div class="ex-sets" id="ex-sets-${ei}">
         ${ex.sets.map((s, si) => renderSetRow(ei, si, s, ex, unit)).join('')}
@@ -1383,7 +1587,15 @@ function finishWorkout() {
 }
 
 function abandonWorkout() {
-  if (!confirm('Discard this workout? Your sets will not be saved.')) return;
+  openModal(`
+    <div class="modal-title">Discard this workout?</div>
+    <div class="modal-sub">The sets you've logged today will not be saved. Your program position stays where it is.</div>
+    <button class="btn btn-danger" onclick="doAbandon()">Discard Workout</button>
+    <button class="btn btn-ghost mt-8" onclick="closeModal()">Keep Training</button>
+  `);
+}
+function doAbandon() {
+  closeModal();
   saveActiveWorkout(null);
   activeWorkout = null;
   document.getElementById('workout-dot').classList.remove('show');
@@ -1391,15 +1603,92 @@ function abandonWorkout() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// EXERCISE SWAP
+// ═══════════════════════════════════════════════════════════════════
+
+function openSubPicker(ei) {
+  if (!activeWorkout) return;
+  const ex = activeWorkout.exercises[ei];
+  const orig = ex.origName || ex.name;
+  const opts = (SUBS[orig] || []).filter(o => o !== ex.name);
+
+  const optsHtml = opts.map(o =>
+    `<button class="sub-opt" data-n="${o}" onclick="applySub(${ei}, this.dataset.n)">${o}</button>`
+  ).join('');
+
+  openModal(`
+    <div class="modal-title">Swap: ${ex.name}</div>
+    <div class="modal-sub">Pick a substitute that hits the same movement pattern — machine down, joint pain, crowded gym, whatever the reason. Keep the prescribed ${ex.sets.length} sets × ${ex.repsLabel || ''} and choose a weight you can control with good form.</div>
+    <label class="sub-remember"><input type="checkbox" id="sub-remember"> Use this swap in all future sessions</label>
+    ${optsHtml || '<div class="modal-sub">No preset alternatives for this one — enter your own below.</div>'}
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input class="inp" id="sub-custom" placeholder="Or type your own…" style="margin-bottom:0;flex:1">
+      <button class="btn btn-gold btn-sm" onclick="applyCustomSub(${ei})">Use</button>
+    </div>
+    ${ex.origName ? `<button class="btn btn-ghost mt-12" onclick="restoreSub(${ei})">Restore ${ex.origName}</button>` : ''}
+    <button class="btn btn-ghost mt-8" onclick="closeModal()">Cancel</button>
+  `);
+}
+
+function applySub(ei, newName) {
+  if (!activeWorkout || !newName) return;
+  const remember = document.getElementById('sub-remember')?.checked;
+  const ex = activeWorkout.exercises[ei];
+  const orig = ex.origName || ex.name;
+  ex.origName = orig;
+  ex.name = newName;
+  // Pull in last logged weights for the substitute, if any
+  const prev = getLastWeights(newName);
+  ex.sets.forEach((s, i) => {
+    if (!s.done) s.weight = prev ? (prev[i] ?? prev[0] ?? 0) : 0;
+  });
+  if (remember) {
+    const st = getState();
+    st.subs = st.subs || {};
+    st.subs[orig] = newName;
+    saveState(st);
+  }
+  saveActiveWorkout(activeWorkout);
+  closeModal();
+  renderWorkout();
+  showToast(remember ? 'Swapped — will apply every session' : 'Swapped for this session');
+}
+
+function applyCustomSub(ei) {
+  const v = document.getElementById('sub-custom').value.trim();
+  if (!v) { showToast('Type an exercise name first'); return; }
+  applySub(ei, v);
+}
+
+function restoreSub(ei) {
+  if (!activeWorkout) return;
+  const ex = activeWorkout.exercises[ei];
+  const orig = ex.origName;
+  if (!orig) { closeModal(); return; }
+  ex.name = orig;
+  delete ex.origName;
+  const prev = getLastWeights(orig);
+  ex.sets.forEach((s, i) => {
+    if (!s.done) s.weight = prev ? (prev[i] ?? prev[0] ?? 0) : 0;
+  });
+  const st = getState();
+  if (st.subs && st.subs[orig]) { delete st.subs[orig]; saveState(st); }
+  saveActiveWorkout(activeWorkout);
+  closeModal();
+  renderWorkout();
+  showToast('Original exercise restored');
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // REST TIMER
 // ═══════════════════════════════════════════════════════════════════
 
 let restInterval = null;
+let restEndsAt = 0;
 
 function startRestTimer(seconds, exerciseName, ei, si) {
   clearInterval(restInterval);
   const overlay = document.getElementById('rest-overlay');
-  const countEl = document.getElementById('rest-count');
   const exEl = document.getElementById('rest-exercise');
 
   // Find next set info
@@ -1416,23 +1705,30 @@ function startRestTimer(seconds, exerciseName, ei, si) {
   exEl.textContent = nextInfo;
   overlay.classList.add('show');
 
-  let remaining = seconds;
-  countEl.textContent = remaining;
+  // Count down from a wall-clock deadline so the timer stays correct
+  // even while the screen is locked or the app is backgrounded.
+  restEndsAt = Date.now() + seconds * 1000;
+  updateRestDisplay();
+  restInterval = setInterval(updateRestDisplay, 250);
+}
 
-  restInterval = setInterval(() => {
-    remaining--;
-    countEl.textContent = remaining;
-    if (remaining <= 0) {
-      clearInterval(restInterval);
-      overlay.classList.remove('show');
-    }
-  }, 1000);
+function updateRestDisplay() {
+  const remaining = Math.ceil((restEndsAt - Date.now()) / 1000);
+  if (remaining <= 0) { skipRest(); return; }
+  document.getElementById('rest-count').textContent = remaining;
 }
 
 function skipRest() {
   clearInterval(restInterval);
   document.getElementById('rest-overlay').classList.remove('show');
 }
+
+// Re-sync the countdown the moment the app returns to the foreground
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && document.getElementById('rest-overlay').classList.contains('show')) {
+    updateRestDisplay();
+  }
+});
 
 // ═══════════════════════════════════════════════════════════════════
 // HISTORY SCREEN
@@ -1629,12 +1925,22 @@ function renderProgress() {
 }
 
 function logBodyweight() {
-  const val = parseFloat(prompt('Enter your current bodyweight:'));
-  if (!val || isNaN(val)) return;
+  openModal(`
+    <div class="modal-title">Log Bodyweight</div>
+    <input class="inp" type="number" inputmode="decimal" step="0.1" id="bw-modal" placeholder="e.g. 187.5" style="margin-bottom:12px">
+    <button class="btn btn-gold" onclick="saveBodyweight()">Save</button>
+    <button class="btn btn-ghost mt-8" onclick="closeModal()">Cancel</button>
+  `);
+  setTimeout(() => document.getElementById('bw-modal')?.focus(), 60);
+}
+function saveBodyweight() {
+  const val = parseFloat(document.getElementById('bw-modal').value);
+  if (!val || isNaN(val)) { showToast('Enter a number'); return; }
   const logs = getLogs();
   if (!logs._bodyweight) logs._bodyweight = [];
   logs._bodyweight.push({ date: new Date().toISOString().slice(0,10), weight: val });
   saveLogs(logs);
+  closeModal();
   renderProgress();
   showToast('Bodyweight logged');
 }
@@ -1671,6 +1977,13 @@ function init() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
+
+  // Migrate an in-flight workout saved by the old version (sessionStorage)
+  try {
+    const legacy = sessionStorage.getItem('ng_active');
+    if (legacy && !localStorage.getItem('ng_active')) localStorage.setItem('ng_active', legacy);
+    sessionStorage.removeItem('ng_active');
+  } catch {}
 
   const state = getState();
 
